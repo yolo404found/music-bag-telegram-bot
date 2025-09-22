@@ -59,8 +59,15 @@ export class MessageHandler {
         
         // Process the YouTube URL
         await this.processYouTubeUrl(chatId, youtubeUrl, msg);
+      } else if (messageText.trim().length > 0) {
+        // If not a URL and not empty, treat as search query
+        // Consume rate limit
+        await rateLimitService.consumeRateLimit(chatId);
+        
+        // Process search query
+        await this.processSearchQuery(chatId, messageText.trim(), msg);
       } else {
-        // Send help message for invalid input
+        // Send help message for empty input
         await this.sendHelpMessage(chatId);
       }
 
@@ -106,6 +113,16 @@ export class MessageHandler {
           await this.handleResetCommand(chatId, args);
         } else {
           await this.sendMessage(chatId, '❌ This command is only available to administrators.');
+        }
+        break;
+      
+      case '/search':
+        if (args.length === 0) {
+          await this.sendMessage(chatId, '❓ Please provide a search query. Example: `/search artist song name`');
+        } else {
+          const query = args.join(' ');
+          await rateLimitService.consumeRateLimit(chatId);
+          await this.processSearchQuery(chatId, query, msg);
         }
         break;
       
@@ -192,6 +209,78 @@ export class MessageHandler {
   }
 
   /**
+   * Process search query
+   */
+  private async processSearchQuery(
+    chatId: number,
+    query: string,
+    _msg: ExtendedMessage
+  ): Promise<void> {
+    let statusMessage: TelegramBot.Message | undefined;
+
+    try {
+      // Send initial search message
+      statusMessage = await this.sendMessage(chatId, '🔍 Searching for music...');
+
+      // Search using API service
+      const searchResult = await this.apiService.search(query, 10);
+
+      if (!searchResult.success) {
+        await this.editMessage(
+          chatId,
+          statusMessage.message_id,
+          `❌ Search failed: ${searchResult.error || 'Unknown error'}. Please try again later.`
+        );
+        return;
+      }
+
+      if (searchResult.results.length === 0) {
+        await this.editMessage(
+          chatId,
+          statusMessage.message_id,
+          `❌ No results found for "${query}".
+
+🔍 **Try:**
+• Different keywords
+• Artist + song name
+• Check spelling
+• Use simpler terms
+
+Example: "Imagine Dragons Believer"`
+        );
+        return;
+      }
+
+      // Create inline keyboard with search results
+      const keyboard = this.createSearchResultsKeyboard(searchResult.results);
+      const searchText = this.formatSearchResults(query, searchResult);
+
+      await this.editMessage(
+        chatId,
+        statusMessage.message_id,
+        searchText,
+        {
+          reply_markup: keyboard,
+          parse_mode: 'Markdown'
+        }
+      );
+
+    } catch (error) {
+      logger.error('Error processing search query', { chatId, query, error });
+      
+      if (statusMessage) {
+        await this.editMessage(
+          chatId,
+          statusMessage.message_id,
+          '❌ Search failed. Please try again later.'
+        );
+      } else {
+        await this.sendErrorMessage(chatId, 'Search failed. Please try again later.');
+      }
+    }
+  }
+
+  /**
    * Handle /start command
    */
   private async handleStartCommand(chatId: number, msg: ExtendedMessage): Promise<void> {
@@ -202,16 +291,18 @@ export class MessageHandler {
 I can help you download YouTube videos as MP3 files.
 
 📝 **How to use:**
-• Send me any YouTube URL
-• I'll check if it can be downloaded
-• You'll receive the MP3 file or a download link
+• **Method 1:** Send me any YouTube URL
+• **Method 2:** Send me a song/artist name to search
+• **Method 3:** Use /search command: \`/search artist song name\`
+
+I'll check if it can be downloaded and send you the MP3 file or a download link.
 
 ⚠️ **Important:**
-• Only YouTube URLs are supported
 • Copyright-protected content may not be downloadable
 • Large files will be provided as download links
+• Search results show the most relevant matches
 
-Type /help for more information or send me a YouTube URL to get started!
+Type /help for more information or try searching for your favorite song!
     `.trim();
 
     await this.sendMessage(chatId, welcomeText);
@@ -227,18 +318,24 @@ Type /help for more information or send me a YouTube URL to get started!
 **Commands:**
 /start - Show welcome message
 /help - Show this help message
+/search - Search for music by name
 /status - Check bot status
 /limits - Show your rate limits
 
-**Usage:**
-1. Send me a YouTube URL (youtube.com or youtu.be)
-2. I'll check if the video can be downloaded
-3. You'll receive the MP3 file directly or a download link
+**Usage Methods:**
+**1. YouTube URL:** Send any YouTube link directly
+**2. Text Search:** Send song/artist name (e.g., "Bohemian Rhapsody Queen")
+**3. Search Command:** /search artist song name
 
 **Supported URLs:**
 ✅ https://www.youtube.com/watch?v=VIDEO_ID
 ✅ https://youtu.be/VIDEO_ID
 ✅ https://m.youtube.com/watch?v=VIDEO_ID
+
+**Search Examples:**
+🎵 "Imagine Dragons Believer"
+🎵 "/search Taylor Swift Anti-Hero"
+🎵 "classic rock songs"
 
 **Limitations:**
 • ${config.bot.rateLimits.perMinute} requests per minute
@@ -374,14 +471,19 @@ ${isAdmin ? '👑 **Admin Status:** Rate limits bypassed' : ''}
    */
   private async sendHelpMessage(chatId: number): Promise<void> {
     const helpText = `
-❓ **Please send me a YouTube URL**
+❓ **Please send me a YouTube URL or search for music**
 
-**Supported formats:**
-• https://www.youtube.com/watch?v=VIDEO_ID
-• https://youtu.be/VIDEO_ID
-• https://m.youtube.com/watch?v=VIDEO_ID
+**Options:**
+• **YouTube URL:** https://www.youtube.com/watch?v=VIDEO_ID
+• **Search:** Send song/artist name (e.g., "Imagine Dragons Believer")
+• **Command:** /search artist song name
 
-Or type /help for more information.
+**Examples:**
+🎵 "Taylor Swift Anti-Hero"
+🎵 "/search Queen Bohemian Rhapsody"
+🎵 "https://youtu.be/VIDEO_ID"
+
+Or type /help for complete information.
     `.trim();
 
     await this.sendMessage(chatId, helpText);
@@ -475,6 +577,68 @@ ${videoInfo.isLive ? '🔴 **Live Stream**' : ''}
     } catch (error) {
       logger.error('Failed to send error message', { chatId, message, error });
     }
+  }
+
+  /**
+   * Create search results keyboard
+   */
+  private createSearchResultsKeyboard(results: any[]): TelegramBot.InlineKeyboardMarkup {
+    const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
+    
+    // Add up to 8 results (2 per row)
+    for (let i = 0; i < Math.min(results.length, 8); i += 2) {
+      const row: TelegramBot.InlineKeyboardButton[] = [];
+      
+      // First button in row
+      const result1 = results[i];
+      row.push({
+        text: `🎵 ${this.truncateText(result1.title, 25)}`,
+        callback_data: `select_song|${result1.videoId}`
+      });
+      
+      // Second button in row (if exists)
+      if (i + 1 < results.length && i + 1 < 8) {
+        const result2 = results[i + 1];
+        row.push({
+          text: `🎵 ${this.truncateText(result2.title, 25)}`,
+          callback_data: `select_song|${result2.videoId}`
+        });
+      }
+      
+      keyboard.push(row);
+    }
+    
+    return { inline_keyboard: keyboard };
+  }
+
+  /**
+   * Format search results text
+   */
+  private formatSearchResults(query: string, searchResult: any): string {
+    const results = searchResult.results.slice(0, 8); // Show max 8 results
+    
+    let text = `🔍 **Search Results for:** "${query}"\n`;
+    text += `📊 **Found:** ${results.length} result${results.length !== 1 ? 's' : ''}\n\n`;
+    
+    // results.forEach((result: any, index: number) => {
+    //   text += `**${index + 1}.** ${result.title}\n`;
+    //   text += `👤 ${result.channelTitle}\n`;
+    //   text += `⏱️ ${result.duration}\n\n`;
+    // });
+    
+    text += '👇 **Click a song below to download:**';
+    
+    return text;
+  }
+
+  /**
+   * Truncate text to specified length
+   */
+  private truncateText(text: string, maxLength: number): string {
+    if (text.length <= maxLength) {
+      return text;
+    }
+    return text.substring(0, maxLength - 3) + '...';
   }
 }
 

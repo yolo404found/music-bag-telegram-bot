@@ -112,6 +112,10 @@ export class MusicBot {
           await this.handleDeleteFile(query, params[0]);
           break;
         
+        case 'select_song':
+          await this.handleSelectSong(query, params[0]);
+          break;
+        
         default:
           await this.bot.answerCallbackQuery(query.id, { text: 'Unknown action' });
       }
@@ -187,6 +191,45 @@ export class MusicBot {
       logger.error('Error deleting file', { fileToken, error });
       await this.bot.answerCallbackQuery(query.id, { text: 'Failed to delete file' });
     }
+  }
+
+  /**
+   * Handle song selection from search results
+   */
+  private async handleSelectSong(query: TelegramBot.CallbackQuery, videoId: string): Promise<void> {
+    const chatId = query.message?.chat.id;
+    if (!chatId) {
+      await this.bot.answerCallbackQuery(query.id, { text: 'Invalid request' });
+      return;
+    }
+
+    // Check rate limits
+    const rateCheck = await rateLimitService.checkRateLimitWithAdminBypass(chatId);
+    if (!rateCheck.allowed) {
+      const message = rateLimitService.getRateLimitMessage(rateCheck.retryAfter!, rateCheck.reason!);
+      await this.bot.answerCallbackQuery(query.id, { text: message });
+      return;
+    }
+
+    await this.bot.answerCallbackQuery(query.id, { text: 'Uploading to Telegram...' });
+    
+    // Consume rate limit
+    await rateLimitService.consumeRateLimit(chatId);
+    
+    // Convert videoId to YouTube URL
+    const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    
+    // No processing message needed - start download silently
+    // Search results remain preserved for the user
+    
+    // Trigger download using the message handler
+    await this.messageHandler.handleMessage({
+      chat: query.message!.chat,
+      message_id: query.message!.message_id,
+      text: youtubeUrl,
+      date: Math.floor(Date.now() / 1000),
+      from: query.from
+    } as any);
   }
 
   /**

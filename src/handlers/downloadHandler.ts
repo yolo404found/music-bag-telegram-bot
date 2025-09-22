@@ -52,7 +52,7 @@ export class DownloadHandler {
       await this.updateProgressMessage(
         chatId,
         statusMessageId,
-        '🔄 Downloading and converting...',
+        '🔄 Downloading audio...',
         0
       );
 

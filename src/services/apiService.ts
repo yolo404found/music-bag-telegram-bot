@@ -7,6 +7,8 @@ import {
   SubmitRequest, 
   SubmitResponse, 
   StatusResponse,
+  SearchRequest,
+  SearchResponse,
   ApiError,
   Logger 
 } from '../types';
@@ -55,6 +57,28 @@ export class ApiService {
         return Promise.reject(apiError);
       }
     );
+  }
+
+  /**
+   * Search for music/videos by query
+   */
+  async search(query: string, maxResults: number = 10): Promise<SearchResponse> {
+    try {
+      const request: SearchRequest = { query, maxResults };
+      const response: AxiosResponse<any> = await this.client.post('/api/search', request);
+      
+      // Handle nested response format from backend if needed
+      const data = response.data.data || response.data;
+      
+      return {
+        success: data.success || true,
+        results: data.results || [],
+        totalResults: data.totalResults || 0,
+        nextPageToken: data.nextPageToken
+      };
+    } catch (error) {
+      throw this.enhanceError(error as ApiError, 'Failed to search');
+    }
   }
 
   /**

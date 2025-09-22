@@ -45,6 +45,31 @@ export interface StatusResponse {
 
 export type JobStatus = 'queued' | 'processing' | 'ready' | 'failed';
 
+// Search-related types
+export interface SearchRequest {
+  query: string;
+  maxResults?: number;
+  region?: string;
+}
+
+export interface SearchResultItem {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  duration: string;
+  durationSec: number;
+  thumbnail: string;
+  url: string;
+}
+
+export interface SearchResponse {
+  success: boolean;
+  results: SearchResultItem[];
+  totalResults: number;
+  nextPageToken?: string;
+  error?: string;
+}
+
 // Bot Types
 
 export interface BotConfig {
